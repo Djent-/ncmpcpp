@@ -43,10 +43,12 @@
 using Global::MainStartY;
 using Global::MainHeight;
 
+// Visualizer object
 Visualizer *myVisualizer;
 
 namespace {
 
+// FPS ???
 const int fps = 25;
 
 // toColor: a scaling function for coloring. For numbers 0 to max this function returns
@@ -66,9 +68,13 @@ Visualizer::Visualizer()
 : Screen(NC::Window(0, MainStartY, COLS, MainHeight, "", NC::Color::Default, NC::Border()))
 {
 	ResetFD();
+	// this is the number of samples it gets from MPD (every second?)
 	m_samples = 44100/fps;
+	// with stereo, there's double the samples
 	if (Config.visualizer_in_stereo)
 		m_samples *= 2;
+	
+	// I don't know wtf this all is
 #	ifdef HAVE_FFTW3_H
 	m_fftw_results = m_samples/2+1;
 	m_freq_magnitudes.resize(m_fftw_results);
@@ -78,52 +84,67 @@ Visualizer::Visualizer()
 #	endif // HAVE_FFTW3_H
 }
 
+// when switching to the visualizer within ncmpcpp
 void Visualizer::switchTo()
 {
+	// call the constructor
 	SwitchTo::execute(this);
+	// clear the window
 	w.clear();
+	// TODO: need to figure out what this does
 	SetFD();
+	// TODO: need to figure out what this is
 	m_timer = boost::posix_time::from_time_t(0);
 	drawHeader();
 }
 
+// when the ncurses window is resized
 void Visualizer::resize()
 {
 	size_t x_offset, width;
+	// get the new x and y dimensions
 	getWindowResizeParams(x_offset, width);
+	// resize the ncurses window
 	w.resize(width, MainHeight);
+	// move the stuff in the window to fit the new window size ???
 	w.moveTo(x_offset, MainStartY);
+	// reset the resize flag
 	hasToBeResized = 0;
 }
 
+// getter for the visualizer pane title
 std::wstring Visualizer::title()
 {
+	// TODO: what does the L mean
 	return L"Music visualizer";
 }
 
 void Visualizer::update()
 {
+	// if fifo doesn't exist
 	if (m_fifo < 0)
 		return;
 
 	// PCM in format 44100:16:1 (for mono visualization) and
 	// 44100:16:2 (for stereo visualization) is supported.
-	int16_t buf[m_samples];
+	int16_t buf[m_samples]; // create array
+	// read from the fifo buffer
 	ssize_t data = read(m_fifo, buf, sizeof(buf));
 	if (data < 0) // no data available in fifo
 		return;
 
+	// TODO: if the visualizer is out of sync ???
 	if (m_output_id != -1 && Global::Timer - m_timer > Config.visualizer_sync_interval)
 	{
 		Mpd.DisableOutput(m_output_id);
-		usleep(50000);
+		usleep(50000); // TODO: sleep for 50 seconds???
 		Mpd.EnableOutput(m_output_id);
-		m_timer = Global::Timer;
+		m_timer = Global::Timer; // put the timer in sync
 	}
 
 	void (Visualizer::*draw)(int16_t *, ssize_t, size_t, size_t);
 	void (Visualizer::*drawStereo)(int16_t *, int16_t *, ssize_t, size_t);
-#	ifdef HAVE_FFTW3_H
+#	ifdef HAVE_FFTW3_H // TODO: fast fourier transform... what is W3_H???
 	if (Config.visualizer_type == VisualizerType::Spectrum)
 	{
 		draw = &Visualizer::DrawFrequencySpectrum;
@@ -136,7 +157,7 @@ void Visualizer::update()
 		draw = &Visualizer::DrawSoundWaveFill;
 		drawStereo = &Visualizer::DrawSoundWaveFillStereo;
 	}
-	else if (Config.visualizer_type == VisualizerType::Ellipse)
+	else if (Config.visualizer_type == VisualizerType::Ellipse) // TODO: how do you enable this???
 	{
 		draw = &Visualizer::DrawSoundEllipse;
 		drawStereo = &Visualizer::DrawSoundEllipseStereo;
@@ -147,6 +168,8 @@ void Visualizer::update()
 		drawStereo = &Visualizer::DrawSoundWaveStereo;
 	}
 
+	// number of samples is the size of the data/16
+	// therefore each sample is 16 bits
 	const ssize_t samples_read = data/sizeof(int16_t);
 	if (Config.visualizer_sample_multiplier == 1.0)
 	{
@@ -154,11 +177,12 @@ void Visualizer::update()
 		std::for_each(buf, buf+samples_read, [this](int16_t &sample) {
 			double scale = std::numeric_limits<int16_t>::min();
 			scale /= sample;
-			scale = fabs(scale);
+			scale = fabs(scale); // TODO: what is this? Absolute value???
 			if (scale < m_auto_scale_multiplier)
 				m_auto_scale_multiplier = scale;
 		});
 	}
+	// for each sample in the buffer, scale the sample
 	std::for_each(buf, buf+samples_read, [this](int16_t &sample) {
 		int32_t tmp = sample;
 		if (Config.visualizer_sample_multiplier != 1.0)
@@ -173,11 +197,16 @@ void Visualizer::update()
 			sample = tmp;
 	});
 
+	// clear the screen
 	w.clear();
 	if (Config.visualizer_in_stereo)
 	{
+		// TODO: what does auto mean???
+		// the number of samples is halfed because half are for the left channel and half are for the right
 		auto chan_samples = samples_read/2;
+		// makes arrays for left and right audio channels
 		int16_t buf_left[chan_samples], buf_right[chan_samples];
+		// alternate samples between the left buffer and right buffer
 		for (ssize_t i = 0, j = 0; i < samples_read; i += 2, ++j)
 		{
 			buf_left[j] = buf[i];
@@ -185,15 +214,19 @@ void Visualizer::update()
 		}
 		size_t half_height = w.getHeight()/2;
 
+		// draw the visualizer
 		(this->*drawStereo)(buf_left, buf_right, chan_samples, half_height);
 	}
 	else
 	{
+		// draw the visualizer
 		(this->*draw)(buf, samples_read, 0, w.getHeight());
 	}
+	// refresh the window
 	w.refresh();
 }
 
+// TODO: I don't know what this does or when it does it, but I know why it does
 int Visualizer::windowTimeout()
 {
 	if (m_fifo >= 0 && Status::State::player() == MPD::psPlay)
@@ -202,10 +235,13 @@ int Visualizer::windowTimeout()
 		return Screen<WindowType>::windowTimeout();
 }
 
+// TODO: what does this line separate???
 /**********************************************************************/
 
+// sound wave visualizer
 void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, size_t height)
 {
+	// initialize variables
 	const size_t half_height = height/2;
 	const size_t base_y = y_offset+half_height;
 	const size_t win_width = w.getWidth();
@@ -215,6 +251,8 @@ void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, s
 	if (samples_per_column == 0)
 		return;
 
+	// TODO: what is auto???
+	// TODO: what does all the <<s do??
 	auto draw_point = [&](size_t x, int32_t y) {
 		w << NC::XY(x, base_y+y)
 		<< toColor(std::abs(y), half_height, false)
@@ -223,6 +261,7 @@ void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, s
 	};
 
 	int32_t point_y, prev_point_y = 0;
+	// for each x value, calculate the y
 	for (size_t x = 0; x < win_width; ++x)
 	{
 		point_y = 0;
@@ -233,6 +272,7 @@ void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, s
 		// normalize it to fit the screen
 		point_y *= height / 65536.0;
 
+		// draw the point on the screen
 		draw_point(x, point_y);
 
 		// if the gap between two consecutive points is too big,
@@ -255,6 +295,7 @@ void Visualizer::DrawSoundWave(int16_t *buf, ssize_t samples, size_t y_offset, s
 	}
 }
 
+// if it's in stereo, just draw two sound waves
 void Visualizer::DrawSoundWaveStereo(int16_t *buf_left, int16_t *buf_right, ssize_t samples, size_t height)
 {
 	DrawSoundWave(buf_left, samples, 0, height);
@@ -292,6 +333,7 @@ void Visualizer::DrawSoundWaveFill(int16_t *buf, ssize_t samples, size_t y_offse
 		for (int32_t j = 0; j < point_y; ++j)
 		{
 			size_t y = flipped ? y_offset+j : y_offset+height-j-1;
+			// TODO: what do all the <<s do???
 			w << NC::XY(x, y)
 			<< toColor(j, height)
 			<< Config.visualizer_chars[1]
@@ -300,6 +342,7 @@ void Visualizer::DrawSoundWaveFill(int16_t *buf, ssize_t samples, size_t y_offse
 	}
 }
 
+// just draw two soundwaves if the song is in stereo
 void Visualizer::DrawSoundWaveFillStereo(int16_t *buf_left, int16_t *buf_right, ssize_t samples, size_t height)
 {
 	DrawSoundWaveFill(buf_left, samples, 0, height);
@@ -308,17 +351,22 @@ void Visualizer::DrawSoundWaveFillStereo(int16_t *buf_left, int16_t *buf_right, 
 
 /**********************************************************************/
 
+// can't figure out how to activate this
 // draws the sound wave as an ellipse with origin in the center of the screen
 void Visualizer::DrawSoundEllipse(int16_t *buf, ssize_t samples, size_t, size_t height)
 {
+	// initialize variables
+	// these are probably used to calculate where the center of the circle should be
 	const size_t half_width = w.getWidth()/2;
 	const size_t half_height = height/2;
 
 	// make it so that the loop goes around the ellipse exactly once
+	// TODO: what is boost???
 	const double deg_multiplier = 2*boost::math::constants::pi<double>()/samples;
 
 	int32_t x, y;
 	double radius, max_radius;
+	// for each of the samples
 	for (ssize_t i = 0; i < samples; ++i)
 	{
 		x = half_width * std::cos(i*deg_multiplier);
